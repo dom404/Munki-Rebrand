@@ -56,10 +56,12 @@ You must have Xcode and Xcode tools installed to run this.
 ## Update 17-03-26
 Proper Assets.car generation<br/>
 Beta version support : Use --beta flag to grab the latest prerelease<br/>
-macOS 26 compatibility - Handles the new icon system correctly<br/>
+Use selected version i.e. --pkg https://github.com/munki/munki/releases/download/v7.1.0.5628/munkitools-7.1.0.5628.pkg<br/>
+macOS 26 compatibility<br/>
 All helper apps - Properly processes symlinks and updates icons everywhere<br/>
 Code signing - Keeps apps signed and verified<br/>
 Version detection - Correctly identifies the actual version from the app bundle<br/>
+Debug added --debug<br/>
 
 ## Update 06-11-25:  
 Fixed Custom Naming for macOS 26<br/>
