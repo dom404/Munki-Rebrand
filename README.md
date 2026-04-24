@@ -31,6 +31,8 @@ options:
   -u USER, --user USER  Username to use for signing (default: current sudo user)
   -v, --verbose         Be more verbose
   -x, --version         Print version and exit
+  --debug               Print debug information
+  --beta                Use the latest beta version instead of stable
 ```
   i.e.
 ```
