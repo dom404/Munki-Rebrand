@@ -52,8 +52,10 @@ sudo ./munki_rebrand_swift.py --appname "My New App Store" --icon-file New_App_S
 sudo ./munki_rebrand_swift.py --appname "My New App Store" --icon-file New_App_Store_Icon.png --pkg https://github.com/munki/munki/releases/download/v7.1.0.5628/munkitools-7.1.0.5628.pkg
 ```
 
-You must have Xcode and Xcode tools installed to run this.
+You must have Xcode tools installed to run this.
 
+## Update 24-04-26
+Update URL for beta and release
 
 ## Update 17-03-26
 Proper Assets.car generation<br/>
