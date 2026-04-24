@@ -60,7 +60,8 @@ Update URL for beta and release
 ## Update 17-03-26
 Proper Assets.car generation<br/>
 Beta version support : Use --beta flag to grab the latest prerelease<br/>
-Use selected version i.e. --pkg https://github.com/munki/munki/releases/download/v7.1.0.5628/munkitools-7.1.0.5628.pkg<br/>
+Use selected version i.e. --pkg /path/to/my/munkitools-7.xxxx.pkg<br/>
+https://github.com/munki/munki/releases/download/v7.xxxx/munkitools-7.xxxx.pkg<br/>
 macOS 26 compatibility<br/>
 All helper apps - Properly processes symlinks and updates icons everywhere<br/>
 Code signing - Keeps apps signed and verified<br/>
