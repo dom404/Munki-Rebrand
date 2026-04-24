@@ -24,8 +24,9 @@ import json
 import getpass
 import hashlib
 import uuid
+import re
 
-VERSION = "7.19"
+VERSION = "7.20"
 
 APPNAME_LOCALIZED = {
     "Base": "Managed Software Center",
@@ -112,29 +113,137 @@ def run_cmd(cmd, ret=None):
     if ret:
         return proc.stdout.rstrip().decode()
 
+def get_github_token():
+    """Get GitHub token from environment or keychain"""
+    token = os.environ.get('GITHUB_TOKEN')
+    if not token:
+        # Try to get from a config file
+        token_file = os.path.expanduser("~/.github_token")
+        if os.path.exists(token_file):
+            try:
+                with open(token_file, 'r') as f:
+                    token = f.read().strip()
+            except:
+                pass
+    return token
+
 def get_latest_munki_url(beta=False):
     """Get the latest Munki release URL, optionally including betas"""
+    # Build curl command with authentication if available
+    token = get_github_token()
+    auth_header = []
+    if token:
+        auth_header = ["-H", f"Authorization: token {token}"]
+        if verbose:
+            print("Using GitHub authentication token")
+    
     if beta:
-        cmd = [CURL, "-s", MUNKIBETAURL]
+        cmd = [CURL, "-s"] + auth_header + ["-H", "Accept: application/vnd.github.v3+json", MUNKIBETAURL]
         j = run_cmd(cmd, ret=True)
-        releases = json.loads(j)
+        
+        # Debug: Save and print the response
+        if verbose:
+            print(f"DEBUG: Beta API Response length: {len(j)} characters")
+            debug_file = os.path.join(tmp_dir, "github_api_beta_response.json")
+            with open(debug_file, 'w') as f:
+                f.write(j)
+            print(f"DEBUG: Beta API response saved to {debug_file}")
+            print(f"DEBUG: Response preview: {j[:500]}")
+        
+        try:
+            releases = json.loads(j)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to parse JSON response: {e}")
+            print(f"Response: {j[:200]}")
+            sys.exit(1)
+        
+        # Check if we got a rate limit error
+        if isinstance(releases, dict) and releases.get("message"):
+            print(f"GitHub API error: {releases.get('message')}")
+            if "API rate limit exceeded" in releases.get("message", ""):
+                print("Rate limit exceeded. Try again later or use a GitHub token.")
+                print("You can set a token with: export GITHUB_TOKEN=your_token_here")
+            sys.exit(1)
+        
+        # Ensure releases is a list
+        if not isinstance(releases, list):
+            print(f"ERROR: Expected list of releases, got {type(releases)}")
+            if verbose:
+                print(f"Response: {json.dumps(releases, indent=2)[:500]}")
+            sys.exit(1)
         
         # Find the latest beta (prerelease) version
         for release in releases:
             if release.get("prerelease", False):
                 print(f"Found beta: {release['tag_name']}")
-                return release["assets"][0]["browser_download_url"]
+                # Check if assets exist and the list is not empty
+                if "assets" in release and release["assets"] and len(release["assets"]) > 0:
+                    download_url = release["assets"][0]["browser_download_url"]
+                    print(f"  Download URL: {download_url}")
+                    return download_url
+                else:
+                    print(f"  Warning: No assets found for beta release {release['tag_name']}")
+                    if verbose and "assets" in release:
+                        print(f"    Assets field exists but is empty or invalid")
+                    continue
         
-        print("No beta found, falling back to latest stable")
-        cmd = [CURL, "-s", MUNKIURL]
-        j = run_cmd(cmd, ret=True)
-        api_result = json.loads(j)
-        return api_result["assets"][0]["browser_download_url"]
+        print("No suitable beta found with assets, falling back to latest stable")
+        return get_latest_munki_url(beta=False)  # Recursively call for stable
     else:
-        cmd = [CURL, "-s", MUNKIURL]
+        cmd = [CURL, "-s"] + auth_header + ["-H", "Accept: application/vnd.github.v3+json", MUNKIURL]
         j = run_cmd(cmd, ret=True)
-        api_result = json.loads(j)
-        return api_result["assets"][0]["browser_download_url"]
+        
+        # Debug: Save the response
+        if verbose:
+            print(f"DEBUG: Stable API Response length: {len(j)} characters")
+            debug_file = os.path.join(tmp_dir, "github_api_stable_response.json")
+            with open(debug_file, 'w') as f:
+                f.write(j)
+            print(f"DEBUG: Stable API response saved to {debug_file}")
+            print(f"DEBUG: Response preview: {j[:500]}")
+        
+        try:
+            api_result = json.loads(j)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to parse JSON response: {e}")
+            print(f"Response: {j[:200]}")
+            sys.exit(1)
+        
+        # Check for API errors
+        if "message" in api_result:
+            print(f"GitHub API error: {api_result['message']}")
+            if "API rate limit exceeded" in api_result["message"]:
+                print("Rate limit exceeded. Try again later or use a GitHub token.")
+                print("You can set a token with: export GITHUB_TOKEN=your_token_here")
+            sys.exit(1)
+        
+        # Check for assets
+        if "assets" in api_result and api_result["assets"] and len(api_result["assets"]) > 0:
+            download_url = api_result["assets"][0]["browser_download_url"]
+            if verbose:
+                print(f"Found download URL: {download_url}")
+            return download_url
+        else:
+            print(f"ERROR: No assets found in the latest release")
+            print(f"Release name: {api_result.get('name', 'Unknown')}")
+            print(f"Release tag: {api_result.get('tag_name', 'Unknown')}")
+            print(f"Assets present: {'assets' in api_result}")
+            if "assets" in api_result:
+                print(f"Assets count: {len(api_result['assets'])}")
+            print(f"Available keys: {list(api_result.keys())}")
+            
+            # As a fallback, try to get the download URL from the release page
+            print("\nAttempting to find download URL from release page...")
+            html_url = api_result.get("html_url")
+            if html_url:
+                print(f"Release page: {html_url}")
+                print("\nPlease download the munkitools package manually from this URL")
+                print("and use the --pkg option to specify the local file.")
+                print(f"\nExample:")
+                print(f"  curl -L -o /tmp/munkitools.pkg [download_url]")
+                print(f"  sudo {sys.argv[0]} --appname \"{args.appname if 'args' in dir() else 'My App'}\" --pkg /tmp/munkitools.pkg")
+            
+            sys.exit(1)
 
 def download_pkg(url, output):
     print(f"Downloading munkitools from {url}...")
@@ -199,7 +308,7 @@ def replace_strings(strings_file, code, appname):
             # We want to only replace on the right hand side of any =
             # and we don't want to do it to a comment
             if "=" in line and not line.startswith("/*"):
-                left, right = line.split("=")
+                left, right = line.split("=", 1)
                 right = right.replace(localized, appname)
                 line = "=".join([left, right])
             fw.write(line)
@@ -614,7 +723,6 @@ def get_version_from_package(root_dir):
             with open(distfile, 'r') as f:
                 content = f.read()
                 # Look for version in the Distribution file
-                import re
                 match = re.search(r'version="([0-9.]+)"', content)
                 if match:
                     return match.group(1)
