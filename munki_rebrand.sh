@@ -26,7 +26,7 @@
 
 set -euo pipefail
 
-VERSION="6.0"
+VERSION="6.1"
 APPNAME="Managed Software Center"
 
 get_localized_name() {
@@ -88,8 +88,6 @@ MS_APP_PATH="$MSC_APP_PATH/Contents/Helpers/MunkiStatus.app"
 MN_APP_PATH="$MSC_APP_PATH/Contents/Helpers/munki-notifier.app"
 
 MUNKI_PATH="usr/local/munki"
-PY_FWK="$MUNKI_PATH/Python.Framework"
-PY_CUR="$PY_FWK/Versions/Current"
 
 cleanup() {
     echo "Cleaning up..."
@@ -599,7 +597,6 @@ main() {
     
     local app_pkg=""
     local core_pkg=""  
-    local python_pkg=""
     local admin_pkg=""
     
     for pattern in "munkitools_app.pkg" "munkitools_app-*.pkg" "munkitools_admin*" "munkitools_app_usage*"; do
@@ -627,11 +624,6 @@ main() {
     done
     
     core_pkg=$(find "$root_dir" -name "munkitools_core*" -type d 2>/dev/null | head -1)
-    python_pkg=$(find "$root_dir" -name "munkitools_python*" -type d 2>/dev/null | head -1)
-    if [[ -z "$python_pkg" ]]; then
-        # Try alternative naming
-        python_pkg=$(find "$root_dir" -name "munkitools_pythonlibs*" -type d 2>/dev/null | head -1)
-    fi
     local launchd_pkg=$(find "$root_dir" -name "munkitools_launchd*" -type d 2>/dev/null | head -1)
     local app_usage_pkg=$(find "$root_dir" -name "munkitools_app_usage*" -type d 2>/dev/null | head -1)
     
@@ -652,13 +644,13 @@ main() {
         app_pkg="$actual_app_pkg"
     fi
     
-    if [[ -z "$app_pkg" || -z "$core_pkg" || -z "$python_pkg" ]]; then
+    if [[ -z "$app_pkg" || -z "$core_pkg" ]]; then
         echo "Package components found:"
         find "$root_dir" -name "munkitools_*" -type d
-        die "Could not find required package components. Found: app='$app_pkg' core='$core_pkg' python='$python_pkg'"
+        die "Could not find required package components. Found: app='$app_pkg' core='$core_pkg'"
     fi
     
-    log "Found packages: app='$app_pkg' core='$core_pkg' python='$python_pkg'"
+    log "Found packages: app='$app_pkg' core='$core_pkg'"
     
     if [[ "$VERBOSE" == true ]]; then
         echo "Checking package contents to find the GUI apps:" >&2
@@ -703,13 +695,11 @@ main() {
     local app_scripts="$app_pkg/Scripts"
     local app_payload="$app_pkg/Payload"
     local core_payload="$core_pkg/Payload"
-    local python_payload="$python_pkg/Payload"
     
     log "Package paths:"
     log "  app_scripts: $app_scripts"
     log "  app_payload: $app_payload"
     log "  core_payload: $core_payload"
-    log "  python_payload: $python_payload"
     
     if [[ -n "$postinstall" && -f "$postinstall" ]]; then
         local dest="$app_scripts/postinstall"
@@ -847,7 +837,6 @@ main() {
         log "Payload directories:"
         log "  app_payload: $app_payload"
         log "  core_payload: $core_payload"
-        log "  python_payload: $python_payload"
         log "App path variables:"
         log "  MSC_APP_PATH: $MSC_APP_PATH"
         log "  MS_APP_PATH: $MS_APP_PATH"
@@ -962,36 +951,8 @@ main() {
             done
         fi
         
-        # Python package binaries (needs specific handling for .so/.dylib files)
-        local pylib="$python_payload/$PY_CUR/lib"
-        local pybin="$python_payload/$PY_CUR/bin"
-        
-        for pydir in "$pylib" "$pybin"; do
-            if [[ -d "$pydir" ]]; then
-                # Use a temporary file to avoid subshell issue
-                local temp_file
-                temp_file=$(mktemp)
-                find "$pydir" -type f \( -perm +111 -o -name "*.so" -o -name "*.dylib" \) > "$temp_file"
-                while IFS= read -r binary; do
-                    if [[ -n "$binary" ]] && (is_signable_bin "$binary" || is_signable_lib "$binary"); then
-                        binaries+=("$binary")
-                    fi
-                done < "$temp_file"
-                rm -f "$temp_file"
-            fi
-        done
-        
         # Add entitled binaries only if they exist
         local entitled_binaries=()
-        local python_app="$python_payload/$PY_CUR/Resources/Python.app"
-        local python3_bin="$python_payload/$PY_CUR/bin/python3"
-        
-        if [[ -e "$python_app" ]]; then
-            entitled_binaries+=("$python_app")
-        fi
-        if [[ -e "$python3_bin" ]]; then
-            entitled_binaries+=("$python3_bin")
-        fi
         
         if [[ "$VERBOSE" == true ]]; then
             echo "Found ${#binaries[@]} binaries to sign:"
@@ -1043,14 +1004,6 @@ main() {
             done
         fi
         
-        local py_fwkpath="$python_payload/$PY_FWK"
-        if [[ -d "$py_fwkpath" ]]; then
-            if [[ "$VERBOSE" == true ]]; then
-                echo "Signing Python framework..."
-                echo "  Signing $py_fwkpath..."
-            fi
-            sign_binary "$sign_binaries_id" "$py_fwkpath" true true ""
-        fi
     fi
     
     local final_pkg
