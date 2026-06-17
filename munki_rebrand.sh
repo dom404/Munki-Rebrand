@@ -135,23 +135,23 @@ run_cmd_output() {
 get_latest_munki_url() {
     local json_response
     json_response=$(run_cmd_output "$CURL" "$MUNKIURL")
-    
+
     if [[ "$VERBOSE" == true ]]; then
         echo "GitHub API response preview:" >&2
         echo "$json_response" | head -5 >&2
     fi
-    
+
     if ! echo "$json_response" | "$JQ" . > /dev/null 2>&1; then
         die "Failed to get valid JSON response from GitHub API. Response: $(echo "$json_response" | head -1)"
     fi
-    
+
     local download_url
     download_url=$(echo "$json_response" | "$JQ" -r '.assets[0].browser_download_url' 2>/dev/null)
-    
+
     if [[ -z "$download_url" || "$download_url" == "null" ]]; then
         die "Failed to extract download URL from GitHub API response"
     fi
-    
+
     echo "$download_url"
 }
 
@@ -206,37 +206,37 @@ replace_strings() {
     local strings_file="$1"
     local code="$2"
     local appname="$3"
-    
+
     local localized
     localized=$(get_localized_name "$code")
     if [[ -z "$localized" ]]; then
         log "Unknown language code: $code, skipping..."
         return
     fi
-    
+
     log "Replacing '$localized' in $strings_file with '$appname'..."
-    
+
     local file_type
     file_type=$(file "$strings_file")
-    
+
     local was_utf16=false
     local was_binary=false
-    
+
     if echo "$file_type" | grep -q "UTF-16"; then
         was_utf16=true
         log "Converting UTF-16 file to UTF-8..."
         iconv -f utf-16 -t utf-8 "$strings_file" > "${strings_file}.utf8"
         mv "${strings_file}.utf8" "$strings_file"
-    elif echo "$file_type" | grep -q "Apple binary property list" || 
+    elif echo "$file_type" | grep -q "Apple binary property list" ||
          xxd -l 8 "$strings_file" 2>/dev/null | grep -q "6270 6c69 7374"; then
         was_binary=true
         log "Converting binary plist to XML format..."
         plist_to_xml "$strings_file"
     fi
-    
+
     # Create backup and process line by line like Python script
     cp "$strings_file" "${strings_file}.bak"
-    
+
     # Process the file line by line, only replacing on right side of = and not in comments
     while IFS= read -r line; do
         # Check if line contains = and doesn't start with /*
@@ -250,9 +250,9 @@ replace_strings() {
             echo "$line"
         fi
     done < "${strings_file}.bak" > "$strings_file"
-    
+
     rm "${strings_file}.bak"
-    
+
     if [[ "$was_utf16" == true ]]; then
         log "Converting back to UTF-16..."
         # Use utf-16 (not utf-16le) to include the BOM
@@ -275,38 +275,38 @@ convert_to_icns() {
     local png="$1"
     local output_dir="$2"
     local actool="$3"
-    
+
     local icon_dir="$output_dir/icons"
     mkdir -p "$icon_dir"
-    
+
     local xcassets="$icon_dir/Assets.xcassets"
     mkdir -p "$xcassets"
-    
+
     local iconset="$xcassets/AppIcon.appiconset"
     mkdir -p "$iconset"
-    
+
     cat > "$iconset/Contents.json" << 'EOF'
 {
   "images" : [
 EOF
-    
+
     local first_item=true
     for size_info in "${ICON_SIZES[@]}"; do
         local hw="${size_info%:*}"
         local suffix="${size_info#*:}"
         local scale="1x"
-        
+
         if [[ "$suffix" == *"@2x" ]]; then
             scale="2x"
         fi
-        
+
         run_cmd "$SIPS" -z "$hw" "$hw" "$png" --out "$iconset/AppIcon_${suffix}.png"
-        
+
         local display_hw="$hw"
         if [[ "$suffix" == *"@2x" ]]; then
             display_hw=$((hw / 2))
         fi
-        
+
         if [[ "$first_item" != true ]]; then
             echo "," >> "$iconset/Contents.json"
         fi
@@ -320,7 +320,7 @@ EOF
 EOF
         first_item=false
     done
-    
+
     cat >> "$iconset/Contents.json" << 'EOF'
   ],
   "info" : {
@@ -329,19 +329,19 @@ EOF
   }
 }
 EOF
-    
+
     local icnspath="$icon_dir/AppIcon.icns"
     local carpath="$icon_dir/Assets.car"
-    
+
     if [[ -n "$actool" ]]; then
         local rebrand_dir
         rebrand_dir=$(dirname "$(realpath "$0")")
         local xc_assets_dir="$rebrand_dir/Assets.xcassets/"
-        
+
         if [[ -d "$xc_assets_dir" ]]; then
             cp -r "$xc_assets_dir"* "$xcassets/"
         fi
-        
+
         run_cmd "$actool" --compile "$icon_dir" --app-icon "AppIcon" \
             --minimum-deployment-target "10.11" \
             --output-partial-info-plist "$icon_dir/Info.plist" \
@@ -349,18 +349,18 @@ EOF
     else
         run_cmd "$ICONUTIL" -c icns "$iconset" -o "$icnspath"
     fi
-    
+
     local return_icns=""
     local return_car=""
-    
+
     if [[ -f "$icnspath" ]]; then
         return_icns="$icnspath"
     fi
-    
+
     if [[ -f "$carpath" ]]; then
         return_car="$carpath"
     fi
-    
+
     echo "$return_icns:$return_car"
 }
 
@@ -379,7 +379,12 @@ sign_binary() {
     local deep="$3"
     local force="$4"
     local entitlements="$5"
-    
+
+    # Use ad-hoc signing if no signing ID provided
+    if [[ -z "$signing_id" ]]; then
+        signing_id="-"
+    fi
+
     if [[ "$VERBOSE" == true ]]; then
         echo "sign_binary called with:"
         echo "  signing_id: $signing_id"
@@ -388,28 +393,28 @@ sign_binary() {
         echo "  force: $force"
         echo "  entitlements: $entitlements"
     fi
-    
+
     local cmd=("$CODESIGN" --sign "$signing_id")
-    
+
     if [[ "$force" == true ]]; then
         cmd+=(--force)
     fi
-    
+
     if [[ "$deep" == true ]]; then
         cmd+=(--deep)
     fi
-    
+
     if [[ "$VERBOSE" == true ]]; then
         cmd+=(--verbose)
     fi
-    
+
     if [[ -n "$entitlements" ]]; then
         cmd+=(--entitlements "$entitlements")
     fi
-    
+
     cmd+=(--options runtime)
     cmd+=("$binary")
-    
+
     if [[ "$VERBOSE" == true ]]; then
         echo "Executing codesign command: ${cmd[*]}"
     fi
@@ -423,7 +428,12 @@ is_signable_bin() {
 
 is_signable_lib() {
     local path="$1"
-    [[ -f "$path" && ("$path" == *.so || "$path" == *.dylib) ]]
+    # Fixed syntax error
+    if [[ -f "$path" ]]; then
+        [[ "$path" == *.so || "$path" == *.dylib ]]
+    else
+        return 1
+    fi
 }
 
 usage() {
@@ -466,7 +476,7 @@ main() {
     local resource_addition=""
     local sign_package_id=""
     local sign_binaries_id=""
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -a|--appname)
@@ -524,21 +534,21 @@ main() {
                 ;;
         esac
     done
-    
+
     if [[ -z "$appname" ]]; then
         echo "ERROR: -a or --appname is required" >&2
         usage >&2
         exit 1
     fi
-    
+
     if [[ $EUID -ne 0 ]]; then
         die "You must run this script as root in order to build your new munki installer pkg!"
     fi
-    
+
     TMP_DIR=$(mktemp -d)
-    
+
     local outfilename="${output_file:-munkitools}"
-    
+
     local actool=""
     for tool_path in "${ACTOOL_PATHS[@]}"; do
         if [[ -f "$tool_path" ]]; then
@@ -546,23 +556,23 @@ main() {
             break
         fi
     done
-    
+
     if [[ -z "$actool" ]]; then
         echo "WARNING: actool not found. Icon file will not be replaced in Munki 3.6 and higher. See README for more info."
     fi
-    
+
     local icns=""
     local car=""
     if [[ -n "$icon_file" && -f "$icon_file" ]]; then
         if icon_test "$icon_file"; then
             echo "Converting .png file to .icns..."
-            
+
             local icon_result
             icon_result=$(VERBOSE=false convert_to_icns "$icon_file" "$TMP_DIR" "$actool")
-            
+
             icns=$(echo "$icon_result" | cut -d':' -f1 | tail -1)
             car=$(echo "$icon_result" | cut -d':' -f2 | tail -1)
-            
+
             log "Icon conversion result - ICNS: '$icns', CAR: '$car'"
         else
             die "Icon file must be a 1024x1024 .png"
@@ -570,9 +580,9 @@ main() {
     else
         log "No icon file provided or file doesn't exist: '$icon_file'"
     fi
-    
+
     local output="$TMP_DIR/munkitools.pkg"
-    
+
     if [[ -z "$pkg" ]]; then
         echo "Fetching latest Munki release info from GitHub..."
         local munki_url
@@ -587,18 +597,18 @@ main() {
         download_pkg "$pkg" "$output"
         pkg="$output"
     fi
-    
+
     if [[ ! -f "$pkg" ]]; then
         die "Could not find munkitools pkg $pkg"
     fi
-    
+
     local root_dir="$TMP_DIR/root"
     expand_pkg "$pkg" "$root_dir"
-    
+
     local app_pkg=""
-    local core_pkg=""  
+    local core_pkg=""
     local admin_pkg=""
-    
+
     for pattern in "munkitools_app.pkg" "munkitools_app-*.pkg" "munkitools_admin*" "munkitools_app_usage*"; do
         local found_pkg
         found_pkg=$(find "$root_dir" -name "$pattern" -type d 2>/dev/null | head -1)
@@ -622,11 +632,11 @@ main() {
             esac
         fi
     done
-    
+
     core_pkg=$(find "$root_dir" -name "munkitools_core*" -type d 2>/dev/null | head -1)
     local launchd_pkg=$(find "$root_dir" -name "munkitools_launchd*" -type d 2>/dev/null | head -1)
     local app_usage_pkg=$(find "$root_dir" -name "munkitools_app_usage*" -type d 2>/dev/null | head -1)
-    
+
     local actual_app_pkg=""
     for candidate in "$app_pkg" "$admin_pkg"; do
         if [[ -n "$candidate" && -d "$candidate" ]]; then
@@ -639,19 +649,19 @@ main() {
             fi
         fi
     done
-    
+
     if [[ -n "$actual_app_pkg" ]]; then
         app_pkg="$actual_app_pkg"
     fi
-    
+
     if [[ -z "$app_pkg" || -z "$core_pkg" ]]; then
         echo "Package components found:"
         find "$root_dir" -name "munkitools_*" -type d
         die "Could not find required package components. Found: app='$app_pkg' core='$core_pkg'"
     fi
-    
+
     log "Found packages: app='$app_pkg' core='$core_pkg'"
-    
+
     if [[ "$VERBOSE" == true ]]; then
         echo "Checking package contents to find the GUI apps:" >&2
         for pkg_dir in "$root_dir"/munkitools_*.pkg; do
@@ -666,41 +676,41 @@ main() {
         done
         echo "Package inspection completed." >&2
     fi
-    
+
     log "Proceeding with package processing..."
-    
+
     log "About to read Distribution file..."
     local distfile="$root_dir/Distribution"
     if [[ ! -f "$distfile" ]]; then
         die "Distribution file not found: $distfile"
     fi
-    
+
     log "Reading Distribution file: $distfile"
-    
+
     local munki_version
     munki_version=$(grep -o "product.*id=\"$identifier\".*version=\"[^\"]*\"" "$distfile" 2>/dev/null | sed 's/.*version="\([^"]*\)".*/\1/' | head -1)
-    
+
     if [[ -z "$munki_version" ]]; then
         munki_version=$(grep -o "product.*version=\"[^\"]*\"" "$distfile" 2>/dev/null | sed 's/.*version="\([^"]*\)".*/\1/' | head -1)
     fi
-    
+
     if [[ -z "$munki_version" ]]; then
         munki_version="6.6.5"
         log "Could not extract version from Distribution file, using fallback: $munki_version"
     else
         log "Extracted munki version: $munki_version"
     fi
-    
+
     log "Setting up package paths..."
     local app_scripts="$app_pkg/Scripts"
     local app_payload="$app_pkg/Payload"
     local core_payload="$core_pkg/Payload"
-    
+
     log "Package paths:"
     log "  app_scripts: $app_scripts"
     log "  app_payload: $app_payload"
     log "  core_payload: $core_payload"
-    
+
     if [[ -n "$postinstall" && -f "$postinstall" ]]; then
         local dest="$app_scripts/postinstall"
         echo "Copying postinstall script $postinstall to $dest..."
@@ -708,41 +718,41 @@ main() {
         echo "Making $dest executable..."
         chmod 755 "$dest"
     fi
-    
+
     if [[ -n "$resource_addition" && -f "$resource_addition" ]]; then
         echo "Adding additional resource $resource_addition to $app_scripts..."
         cp "$resource_addition" "$app_scripts/"
     fi
-    
+
     echo "Replacing app name with $appname..."
-    
+
     local apps=(
         "$MSC_APP_PATH"
         "$MS_APP_PATH"
         "$MN_APP_PATH"
     )
-    
+
     for app_path in "${apps[@]}"; do
         local app_dir="$app_payload/$app_path"
         local resources_dir="$app_dir/Contents/Resources"
-        
+
         log "Processing app: $app_path"
         log "App directory: $app_dir"
         log "Resources directory: $resources_dir"
-        
+
         if [[ -d "$resources_dir" ]]; then
             log "Resources directory exists, processing..."
-            
+
             if [[ "$VERBOSE" == true ]]; then
                 echo "Contents of $resources_dir:" >&2
                 ls -la "$resources_dir" >&2
             fi
-            
+
             for lproj_dir in "$resources_dir"/*.lproj; do
                 if [[ -d "$lproj_dir" ]]; then
                     local code
                     code=$(basename "$lproj_dir" .lproj)
-                    
+
                     local localized_name
                     localized_name=$(get_localized_name "$code")
                     if [[ -n "$localized_name" ]]; then
@@ -752,13 +762,13 @@ main() {
                     fi
                 fi
             done
-            
+
             if [[ -n "$icon_file" ]]; then
                 log "Processing icon replacement for $app_path"
                 log "Icon file provided: $icon_file"
                 log "Generated ICNS: '$icns'"
                 log "Generated CAR: '$car'"
-                
+
                 local icon_files=()
                 case "$app_path" in
                     *"Managed Software Center.app")
@@ -771,7 +781,7 @@ main() {
                         icon_files=("AppIcon.icns")
                         ;;
                 esac
-                
+
                 if [[ -n "$icns" && -f "$icns" ]]; then
                     log "Looking for icon files in $resources_dir"
                     if [[ ${#icon_files[@]} -gt 0 ]]; then
@@ -786,7 +796,7 @@ main() {
                             fi
                         done
                     fi
-                    
+
                     find "$resources_dir" -name "*.icns" -type f | while read -r existing_icon; do
                         echo "Replacing additional icon: $existing_icon"
                         cp "$icns" "$existing_icon"
@@ -794,7 +804,7 @@ main() {
                 else
                     log "Generated icns file not found or empty: '$icns'"
                 fi
-                
+
                 if [[ -n "$car" && -f "$car" ]]; then
                     local car_path="$resources_dir/Assets.car"
                     if [[ -f "$car_path" ]]; then
@@ -812,14 +822,14 @@ main() {
             fi
         else
             log "Resources directory does not exist: $resources_dir"
-            
+
             if [[ "$VERBOSE" == true && -d "$app_dir" ]]; then
                 echo "Contents of $app_dir:" >&2
                 find "$app_dir" -type f -name "*.icns" -o -name "*.car" -o -name "Assets.car" 2>/dev/null | head -10 >&2
                 echo "Directory structure:" >&2
                 find "$app_dir" -type d | head -10 >&2
             fi
-            
+
             if [[ "$VERBOSE" == true ]]; then
                 echo "Checking if apps exist as archives or other formats:" >&2
                 find "$app_payload" -name "*.app" -type f 2>/dev/null | head -5 >&2
@@ -828,12 +838,12 @@ main() {
             fi
         fi
     done
-    
+
     find "$root_dir" -exec chown 0:80 {} \;
-    
+
     if [[ -n "$sign_binaries_id" ]]; then
         echo "Signing binaries (this may take a while)..."
-        
+
         log "Payload directories:"
         log "  app_payload: $app_payload"
         log "  core_payload: $core_payload"
@@ -841,7 +851,7 @@ main() {
         log "  MSC_APP_PATH: $MSC_APP_PATH"
         log "  MS_APP_PATH: $MS_APP_PATH"
         log "  MN_APP_PATH: $MN_APP_PATH"
-        
+
         log "Checking payload contents:"
         if [[ -d "$app_payload" ]]; then
             log "Contents of app_payload ($app_payload):"
@@ -851,7 +861,7 @@ main() {
         else
             log "ERROR: app_payload directory does not exist: $app_payload"
         fi
-        
+
         local entitlements_content='<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -860,13 +870,13 @@ main() {
     <true/>
 </dict>
 </plist>'
-        
+
         local ent_file="$TMP_DIR/entitlements.plist"
         echo "$entitlements_content" > "$ent_file"
-        
+
         # Start with an empty array and dynamically find all binaries
         local binaries=()
-        
+
         # App package binaries (including the specific ones we know about)
         if [[ -d "$app_payload" ]]; then
             binaries+=(
@@ -876,7 +886,7 @@ main() {
                 "$app_payload/$MSC_APP_PATH"
             )
         fi
-        
+
         # Core package binaries
         if [[ -d "$core_payload" ]]; then
             local core_binaries
@@ -887,7 +897,7 @@ main() {
                 fi
             done <<< "$core_binaries"
         fi
-        
+
         # Admin package binaries
         if [[ -n "$admin_pkg" && -d "$admin_pkg/Payload" ]]; then
             local admin_binaries
@@ -898,7 +908,7 @@ main() {
                 fi
             done <<< "$admin_binaries"
         fi
-        
+
         # App usage package binaries
         if [[ -n "$app_usage_pkg" && -d "$app_usage_pkg/Payload" ]]; then
             local app_usage_binaries
@@ -909,7 +919,7 @@ main() {
                 fi
             done <<< "$app_usage_binaries"
         fi
-        
+
         # Launchd package - usually no binaries but check anyway
         if [[ -n "$launchd_pkg" && -d "$launchd_pkg/Payload" ]]; then
             local launchd_binaries
@@ -920,14 +930,14 @@ main() {
                 fi
             done <<< "$launchd_binaries"
         fi
-        
+
         if [[ "$VERBOSE" == true ]]; then
             echo "DEBUG: Constructed binary paths:"
             echo "  MSC app: $app_payload/$MSC_APP_PATH"
-            echo "  MS app: $app_payload/$MS_APP_PATH"  
+            echo "  MS app: $app_payload/$MS_APP_PATH"
             echo "  MN app: $app_payload/$MN_APP_PATH"
             echo "  Plugin: $app_payload/$MSC_APP_PATH/Contents/PlugIns/MSCDockTilePlugin.docktileplugin"
-            
+
             echo "DEBUG: Initial binaries to sign:"
             for binary in "${binaries[@]}"; do
                 echo "  - $binary"
@@ -950,17 +960,17 @@ main() {
                 fi
             done
         fi
-        
+
         # Add entitled binaries only if they exist
         local entitled_binaries=()
-        
+
         if [[ "$VERBOSE" == true ]]; then
             echo "Found ${#binaries[@]} binaries to sign:"
             for binary in "${binaries[@]}"; do
                 echo "  - $binary"
             done
         fi
-        
+
         for binary in "${binaries[@]}"; do
             if [[ -e "$binary" ]]; then
                 if [[ "$VERBOSE" == true ]]; then
@@ -976,7 +986,7 @@ main() {
                 echo "WARNING: Binary not found: $binary"
             fi
         done
-        
+
         if [[ "$VERBOSE" == true ]]; then
             echo "Found ${#entitled_binaries[@]} entitled binaries to sign:"
             if [[ ${#entitled_binaries[@]} -gt 0 ]]; then
@@ -985,7 +995,7 @@ main() {
                 done
             fi
         fi
-        
+
         if [[ ${#entitled_binaries[@]} -gt 0 ]]; then
             for binary in "${entitled_binaries[@]}"; do
             if [[ -e "$binary" ]]; then
@@ -1003,18 +1013,25 @@ main() {
             fi
             done
         fi
-        
+
+    else
+        # No signing certificate provided - use ad-hoc signing
+        echo "No signing certificate provided, using ad-hoc signing for all apps..."
+        find "$app_payload" -name "*.app" -type d | while read -r app; do
+            echo "Ad-hoc signing: $(basename "$app")"
+            "$CODESIGN" --force --deep --sign - "$app" 2>/dev/null || true
+        done
     fi
-    
+
     local final_pkg
     final_pkg="${outfilename}-${munki_version}.pkg"
     echo "Building output pkg at $final_pkg..."
     flatten_pkg "$root_dir" "$final_pkg"
-    
+
     if [[ -n "$sign_package_id" ]]; then
         sign_package "$sign_package_id" "$final_pkg"
     fi
-    
+
     echo "Rebranding complete! Output: $final_pkg"
 }
 
